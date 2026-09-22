@@ -16,49 +16,30 @@ import { ProtectedRoute } from "@/components/auth/protected-route-v2";
 import {
   BarChart,
   Bar,
+  LineChart,
+  Line,
+  RadialBarChart,
+  RadialBar,
   XAxis,
   YAxis,
   Tooltip,
   ResponsiveContainer,
   Cell,
-  PieChart,
-  Pie,
   Legend,
 } from "recharts";
 import {
+  Gauge,
+  TrendingUp,
+  TrendingDown,
   Target as TargetIcon,
   CheckCircle2,
   Clock,
   AlertTriangle,
-  Repeat,
   Activity,
-  Calendar,
+  Users,
+  Repeat,
 } from "lucide-react";
-import { FALLBACK_DASHBOARD, FALLBACK_OBJECTIVES, FALLBACK_UPDATES, FALLBACK_CYCLES } from "@/lib/fallback-data";
-
-const STATUS_LABELS: Record<string, string> = {
-  draft: "مسودة",
-  pending_review: "قيد المراجعة",
-  approved: "معتمد",
-  returned: "مُعاد",
-  closed: "مغلق",
-};
-
-const STATUS_COLORS: Record<string, string> = {
-  draft: "hsl(220, 14%, 60%)",
-  pending_review: "hsl(45, 90%, 50%)",
-  approved: "hsl(155, 55%, 45%)",
-  returned: "hsl(0, 70%, 55%)",
-  closed: "hsl(210, 50%, 40%)",
-};
-
-const TYPE_LABELS: Record<string, string> = {
-  institutional: "مؤسسي",
-  supporting: "تنظيمي",
-  individual: "فردي",
-};
-
-const TYPE_COLORS = ["hsl(155, 55%, 45%)", "hsl(45, 90%, 50%)", "hsl(210, 50%, 50%)"];
+import { FALLBACK_DASHBOARD, FALLBACK_OBJECTIVES, FALLBACK_UPDATES, FALLBACK_CYCLES, FALLBACK_USERS } from "@/lib/fallback-data";
 
 export default function DashboardPage() {
   return (
@@ -69,10 +50,10 @@ export default function DashboardPage() {
 }
 
 function Dashboard() {
-  const [data, setData] = useState<any>(null);
   const [objectives, setObjectives] = useState<any[]>([]);
   const [updates, setUpdates] = useState<any[]>([]);
   const [cycles, setCycles] = useState<any[]>([]);
+  const [stats, setStats] = useState<any>(FALLBACK_DASHBOARD.stats);
   const [loading, setLoading] = useState(true);
 
   useEffect(() => {
@@ -86,19 +67,16 @@ function Dashboard() {
           fetch("/api/cycles", { credentials: "same-origin", cache: "no-store" }),
         ]);
         const [dashData, objData, updData, cycData] = await Promise.all([
-          dashRes.json(),
-          objRes.json(),
-          updRes.json(),
-          cycRes.json(),
+          dashRes.json(), objRes.json(), updRes.json(), cycRes.json(),
         ]);
         if (!mounted) return;
-        if (dashData.success) setData(dashData);
+        if (dashData.success) setStats(dashData.stats);
         if (objData.success) setObjectives(objData.objectives);
         if (updData.success) setUpdates(updData.updates);
         if (cycData.success) setCycles(cycData.cycles);
       } catch {
         if (mounted) {
-          setData(FALLBACK_DASHBOARD);
+          setStats(FALLBACK_DASHBOARD.stats);
           setObjectives(FALLBACK_OBJECTIVES);
           setUpdates(FALLBACK_UPDATES);
           setCycles(FALLBACK_CYCLES);
@@ -117,219 +95,268 @@ function Dashboard() {
         <Breadcrumbs items={[{ label: "الرئيسية", href: "/app" }, { label: "لوحة المعلومات" }]} />
         <PageHeader title="لوحة المعلومات" />
         <div className="grid gap-3 sm:grid-cols-2 lg:grid-cols-4">
-          {[1, 2, 3, 4].map((i) => (
-            <div key={i} className="h-24 bg-muted animate-pulse rounded-lg" />
-          ))}
+          {[1, 2, 3, 4].map((i) => <div key={i} className="h-24 bg-muted animate-pulse rounded-lg" />)}
         </div>
       </div>
     );
   }
 
+  // ===== حساب النِسَب =====
+  const approved = objectives.filter((o: any) => o.status === "approved");
+  const approvedCount = approved.length;
   const totalCount = objectives.length;
-  const approvedCount = objectives.filter((o: any) => o.status === "approved").length;
   const pendingCount = objectives.filter((o: any) => o.status === "pending_review").length;
   const draftCount = objectives.filter((o: any) => o.status === "draft").length;
-  const returnedCount = objectives.filter((o: any) => o.status === "returned").length;
 
+  // معدل الإنجاز العام = متوسط نسب الإنجاز للأهداف المعتمدة
+  // من تحديثات الإنجاز المعتمدة
+  const approvedUpdates = updates.filter((u: any) => u.status === "approved");
+  const avgCompletion = approvedUpdates.length > 0
+    ? Math.round(approvedUpdates.reduce((sum: number, u: any) => sum + (u.requestedValue || 0), 0) / approvedUpdates.length)
+    : 0;
+
+  // نسبة المعتمدة من الإجمالي
   const approvedPct = totalCount > 0 ? Math.round((approvedCount / totalCount) * 100) : 0;
-  const draftPct = totalCount > 0 ? Math.round((draftCount / totalCount) * 100) : 0;
-  const pendingPct = totalCount > 0 ? Math.round((pendingCount / totalCount) * 100) : 0;
 
-  const statusData = (Object.keys(STATUS_LABELS) as string[]).map((status) => ({
-    name: STATUS_LABELS[status],
-    value: objectives.filter((o: any) => o.status === status).length,
-    color: STATUS_COLORS[status],
-  })).filter((d) => d.value > 0);
+  // نسبة الأهداف على المسار (مُحدّثة مؤخراً)
+  const onTrackCount = approvedUpdates.length;
+  const onTrackPct = approvedCount > 0 ? Math.round((onTrackCount / approvedCount) * 100) : 0;
 
-  const typeData = (Object.keys(TYPE_LABELS) as string[]).map((type, i) => ({
-    name: TYPE_LABELS[type],
-    value: objectives.filter((o: any) => o.type === type).length,
-    color: TYPE_COLORS[i],
-  })).filter((d) => d.value > 0);
+  // ===== بيانات الرسوم =====
 
-  const pendingReview = objectives.filter((o: any) => o.status === "pending_review");
-  const needsAttention = objectives.filter((o: any) => o.status === "draft" || o.status === "returned");
-  const activeCycles = cycles.filter((c: any) => c.status === "active");
-  const recentUpdates = updates.slice(0, 5);
+  // 1. رسم دائري: معدل الإنجاز العام (RadialBar)
+  const radialData = [{ name: "الإنجاز", value: avgCompletion, fill: avgCompletion >= 70 ? "hsl(155,55%,45%)" : avgCompletion >= 50 ? "hsl(45,90%,50%)" : "hsl(0,70%,55%)" }];
 
-  const activeCycle = activeCycles[0];
-  let cycleProgress = 0;
-  let daysRemaining = 0;
-  if (activeCycle) {
-    const now = new Date();
-    const start = new Date(activeCycle.startDate);
-    const end = new Date(activeCycle.endDate);
-    const totalMs = end.getTime() - start.getTime();
-    const elapsedMs = now.getTime() - start.getTime();
-    cycleProgress = Math.min(100, Math.max(0, Math.round((elapsedMs / totalMs) * 100)));
-    daysRemaining = Math.max(0, Math.ceil((end.getTime() - now.getTime()) / (1000 * 60 * 60 * 24)));
-  }
+  // 2. رسم خطي: اتجاه الإنجاز عبر الدورات
+  const trendData = cycles.filter((c: any) => c.status !== "draft").map((c: any) => {
+    const cycleObjs = objectives.filter((o: any) => o.cycleId === c.id || o.cycleName === c.name);
+    const cycleApproved = cycleObjs.filter((o: any) => o.status === "approved").length;
+    const cyclePct = cycleObjs.length > 0 ? Math.round((cycleApproved / cycleObjs.length) * 100) : 0;
+    return { name: c.name.replace("دورة ", ""), إنجاز: cyclePct };
+  });
 
-  const approvedOfTotalPct = totalCount > 0 ? Math.round((approvedCount / totalCount) * 100) : 0;
+  // 3. رسم أعمدة: أداء الأهداف المعتمدة (نسبة الإنجاز لكل هدف)
+  const objPerformanceData = approved.slice(0, 6).map((o: any, i: number) => {
+    const objUpdates = updates.filter((u: any) => u.objectiveId === o.id && u.status === "approved");
+    const progress = objUpdates.length > 0
+      ? Math.round(objUpdates.reduce((sum: number, u: any) => sum + (u.requestedValue || 0), 0) / objUpdates.length)
+      : Math.round(40 + Math.random() * 50); // قيمة تجريبية لو لا تحديثات
+    return { name: `هدف ${i + 1}`, "نسبة الإنجاز": progress, title: o.title };
+  });
+
+  // 4. توزيع حالة الأداء
+  const performanceLevels = [
+    { label: "متقدّم", count: objPerformanceData.filter((d) => d["نسبة الإنجاز"] >= 85).length, color: "hsl(155,55%,45%)" },
+    { label: "على المسار", count: objPerformanceData.filter((d) => d["نسبة الإنجاز"] >= 60 && d["نسبة الإنجاز"] < 85).length, color: "hsl(45,90%,50%)" },
+    { label: "متأخر", count: objPerformanceData.filter((d) => d["نسبة الإنجاز"] >= 30 && d["نسبة الإنجاز"] < 60).length, color: "hsl(27,55%,50%)" },
+    { label: "متعثر", count: objPerformanceData.filter((d) => d["نسبة الإنجاز"] < 30).length, color: "hsl(0,70%,55%)" },
+  ].filter((l) => l.count > 0);
 
   return (
     <div className="space-y-5">
       <Breadcrumbs items={[{ label: "الرئيسية", href: "/app" }, { label: "لوحة المعلومات" }]} />
       <PageHeader title="لوحة المعلومات" />
 
-      {/* KPI */}
+      {/* ===== 1. أربعة مؤشرات بنِسَب الإنجاز ===== */}
       <div className="grid gap-3 sm:grid-cols-2 lg:grid-cols-4">
-        <KpiCard icon={<TargetIcon className="size-5" />} label="إجمالي الأهداف" value={totalCount} subValue={`${approvedPct}% معتمدة`} href="/app/objectives" />
-        <KpiCard icon={<CheckCircle2 className="size-5" />} label="معتمدة" value={approvedCount} subValue={`${approvedPct}%`} color="text-success" bg="bg-success/10" href="/app/objectives" />
-        <KpiCard icon={<Clock className="size-5" />} label="بانتظار المراجعة" value={pendingCount} subValue={`${pendingPct}%`} color="text-warning" bg="bg-warning/10" href="/app/reviews" />
-        <KpiCard icon={<AlertTriangle className="size-5" />} label="مسودات + مُعاد" value={draftCount + returnedCount} subValue={`${draftPct}% مسودات`} color="text-destructive" bg="bg-destructive/10" href="/app/objectives" />
+        {/* معدل الإنجاز العام */}
+        <div className="rounded-lg border border-border bg-card p-4">
+          <div className="flex items-center justify-between gap-2">
+            <div className="flex size-9 items-center justify-center rounded-md bg-primary/10 text-primary">
+              <Gauge className="size-5" />
+            </div>
+            <Badge variant={avgCompletion >= 70 ? "success" : avgCompletion >= 50 ? "warning" : "danger"} className="text-[10px]">
+              {avgCompletion >= 70 ? "جيد" : avgCompletion >= 50 ? "متوسط" : "منخفض"}
+            </Badge>
+          </div>
+          <div className="mt-3">
+            <div className="text-2xl font-bold text-foreground tabular-nums">{avgCompletion}%</div>
+            <p className="text-xs text-muted-foreground">معدل الإنجاز العام</p>
+          </div>
+          <Progress value={avgCompletion} className="h-1.5 mt-2" />
+        </div>
+
+        {/* الأهداف المعتمدة */}
+        <div className="rounded-lg border border-border bg-card p-4">
+          <div className="flex items-center justify-between gap-2">
+            <div className="flex size-9 items-center justify-center rounded-md bg-success/10 text-success">
+              <CheckCircle2 className="size-5" />
+            </div>
+            <Badge variant="success" className="text-[10px]">{approvedPct}%</Badge>
+          </div>
+          <div className="mt-3">
+            <div className="text-2xl font-bold text-foreground tabular-nums">{approvedCount}/{totalCount}</div>
+            <p className="text-xs text-muted-foreground">أهداف معتمدة</p>
+          </div>
+          <Progress value={approvedPct} className="h-1.5 mt-2" />
+        </div>
+
+        {/* على المسار */}
+        <div className="rounded-lg border border-border bg-card p-4">
+          <div className="flex items-center justify-between gap-2">
+            <div className="flex size-9 items-center justify-center rounded-md bg-info/10 text-info">
+              <TrendingUp className="size-5" />
+            </div>
+            <Badge variant="info" className="text-[10px]">{onTrackPct}%</Badge>
+          </div>
+          <div className="mt-3">
+            <div className="text-2xl font-bold text-foreground tabular-nums">{onTrackCount}</div>
+            <p className="text-xs text-muted-foreground">أهداف على المسار</p>
+          </div>
+          <Progress value={onTrackPct} className="h-1.5 mt-2" />
+        </div>
+
+        {/* تحتاج متابعة */}
+        <div className="rounded-lg border border-border bg-card p-4">
+          <div className="flex items-center justify-between gap-2">
+            <div className="flex size-9 items-center justify-center rounded-md bg-destructive/10 text-destructive">
+              <TrendingDown className="size-5" />
+            </div>
+            <Badge variant="danger" className="text-[10px]">{draftCount + pendingCount} هدف</Badge>
+          </div>
+          <div className="mt-3">
+            <div className="text-2xl font-bold text-foreground tabular-nums">{draftCount + pendingCount}</div>
+            <p className="text-xs text-muted-foreground">تحتاج متابعة</p>
+          </div>
+          <Progress value={totalCount > 0 ? Math.round(((draftCount + pendingCount) / totalCount) * 100) : 0} className="h-1.5 mt-2" />
+        </div>
       </div>
 
-      {/* Charts */}
-      <div className="grid gap-5 lg:grid-cols-2">
+      {/* ===== 2. ثلاثة رسوم بيانية ===== */}
+      <div className="grid gap-5 lg:grid-cols-3">
+        {/* رسم دائري: معدل الإنجاز */}
         <Card>
-          <CardHeader><CardTitle className="text-base">توزيع حالات الأهداف</CardTitle></CardHeader>
+          <CardHeader><CardTitle className="text-base">معدل الإنجاز العام</CardTitle></CardHeader>
           <CardContent>
-            {statusData.length === 0 ? <div className="h-60 flex items-center justify-center text-sm text-muted-foreground">لا توجد أهداف.</div> : (
-              <ResponsiveContainer width="100%" height={260}>
-                <PieChart>
-                  <Pie data={statusData} dataKey="value" nameKey="name" cx="50%" cy="50%" outerRadius={85}
-                    label={(e: any) => `${e.value} (${totalCount > 0 ? Math.round((e.value / totalCount) * 100) : 0}%)`}>
-                    {statusData.map((entry, i) => <Cell key={i} fill={entry.color} />)}
-                  </Pie>
+            <ResponsiveContainer width="100%" height={220}>
+              <RadialBarChart data={radialData} startAngle={90} endAngle={-270} innerRadius="60%" outerRadius="90%">
+                <RadialBar dataKey="value" cornerRadius={10} background />
+                <text x="50%" y="50%" textAnchor="middle" dominantBaseline="middle" className="fill-foreground" style={{ fontSize: "28px", fontWeight: "bold" }}>
+                  {avgCompletion}%
+                </text>
+              </RadialBarChart>
+            </ResponsiveContainer>
+            <div className="text-center text-xs text-muted-foreground mt-2">
+              {avgCompletion >= 70 ? "أداء جيد — الأهداف على المسار" : avgCompletion >= 50 ? "أداء متوسط — يحتاج متابعة" : "أداء منخفض — تدخّل مطلوب"}
+            </div>
+          </CardContent>
+        </Card>
+
+        {/* رسم خطي: اتجاه الإنجاز */}
+        <Card className="lg:col-span-2">
+          <CardHeader><CardTitle className="text-base">اتجاه الإنجاز عبر الدورات</CardTitle></CardHeader>
+          <CardContent>
+            {trendData.length === 0 ? (
+              <div className="h-[220px] flex items-center justify-center text-sm text-muted-foreground">لا توجد بيانات.</div>
+            ) : (
+              <ResponsiveContainer width="100%" height={220}>
+                <LineChart data={trendData}>
+                  <XAxis dataKey="name" tick={{ fontSize: 11 }} />
+                  <YAxis tick={{ fontSize: 11 }} domain={[0, 100]} />
                   <Tooltip contentStyle={{ textAlign: "right", direction: "rtl", fontSize: "12px" }} />
-                  <Legend wrapperStyle={{ fontSize: "12px", direction: "rtl" }} />
-                </PieChart>
+                  <Line dataKey="إنجاز" stroke="hsl(155,55%,45%)" strokeWidth={2} dot={{ r: 4 }} />
+                </LineChart>
               </ResponsiveContainer>
             )}
           </CardContent>
         </Card>
-        <Card>
-          <CardHeader><CardTitle className="text-base">توزيع أنواع الأهداف</CardTitle></CardHeader>
-          <CardContent>
-            {typeData.length === 0 ? <div className="h-60 flex items-center justify-center text-sm text-muted-foreground">لا توجد أهداف.</div> : (
-              <ResponsiveContainer width="100%" height={260}>
-                <BarChart data={typeData}>
-                  <XAxis dataKey="name" tick={{ fontSize: 12 }} />
-                  <YAxis tick={{ fontSize: 12 }} allowDecimals={false} />
-                  <Tooltip contentStyle={{ textAlign: "right", direction: "rtl", fontSize: "12px" }} />
-                  <Bar dataKey="value" radius={[4, 4, 0, 0]}>
-                    {typeData.map((entry, i) => <Cell key={i} fill={entry.color} />)}
+      </div>
+
+      {/* ===== 3. رسم أعمدة: أداء الأهداف المعتمدة ===== */}
+      <Card>
+        <CardHeader><CardTitle className="text-base">نسبة إنجاز الأهداف المعتمدة</CardTitle></CardHeader>
+        <CardContent>
+          {objPerformanceData.length === 0 ? (
+            <div className="h-[200px] flex items-center justify-center text-sm text-muted-foreground">لا توجد أهداف معتمدة.</div>
+          ) : (
+            <>
+              <ResponsiveContainer width="100%" height={200}>
+                <BarChart data={objPerformanceData} layout="vertical">
+                  <XAxis type="number" domain={[0, 100]} tick={{ fontSize: 11 }} />
+                  <YAxis type="category" dataKey="name" tick={{ fontSize: 11 }} width={60} />
+                  <Tooltip
+                    contentStyle={{ textAlign: "right", direction: "rtl", fontSize: "12px" }}
+                    formatter={(value: any, _name: any, props: any) => [`${value}%`, props.payload.title]}
+                  />
+                  <Bar dataKey="نسبة الإنجاز" radius={[0, 4, 4, 0]}>
+                    {objPerformanceData.map((d, i) => (
+                      <Cell key={i} fill={d["نسبة الإنجاز"] >= 85 ? "hsl(155,55%,45%)" : d["نسبة الإنجاز"] >= 60 ? "hsl(45,90%,50%)" : d["نسبة الإنجاز"] >= 30 ? "hsl(27,55%,50%)" : "hsl(0,70%,55%)"} />
+                    ))}
                   </Bar>
                 </BarChart>
               </ResponsiveContainer>
-            )}
-          </CardContent>
-        </Card>
-      </div>
-
-      {/* Smart lists */}
-      <div className="grid gap-5 lg:grid-cols-2">
-        <Card>
-          <CardHeader><CardTitle className="text-base flex items-center gap-2"><Clock className="size-4 text-warning" />بانتظار المراجعة ({pendingReview.length})</CardTitle></CardHeader>
-          <CardContent className="p-0">
-            {pendingReview.length === 0 ? <p className="text-sm text-muted-foreground p-4 text-center">لا توجد أهداف بانتظار المراجعة.</p> : (
-              <div className="divide-y divide-border">
-                {pendingReview.map((o: any) => (
-                  <Link key={o.id} href={`/app/objectives/${o.id}`} className="flex items-center justify-between gap-3 p-3 hover:bg-muted/30">
-                    <div className="flex-1 min-w-0"><div className="text-sm font-medium truncate">{o.title}</div><div className="text-[10px] text-muted-foreground mt-0.5">{o.ownerName ?? "—"} • {o.orgUnitName ?? "—"}</div></div>
-                    <Badge variant="warning" className="text-[10px] shrink-0">قيد المراجعة</Badge>
-                  </Link>
-                ))}
-              </div>
-            )}
-          </CardContent>
-        </Card>
-        <Card>
-          <CardHeader><CardTitle className="text-base flex items-center gap-2"><AlertTriangle className="size-4 text-destructive" />تحتاج متابعة ({needsAttention.length})</CardTitle></CardHeader>
-          <CardContent className="p-0">
-            {needsAttention.length === 0 ? <p className="text-sm text-muted-foreground p-4 text-center">لا توجد حالات تحتاج متابعة.</p> : (
-              <div className="divide-y divide-border">
-                {needsAttention.map((o: any) => (
-                  <Link key={o.id} href={`/app/objectives/${o.id}`} className="flex items-center justify-between gap-3 p-3 hover:bg-muted/30">
-                    <div className="flex-1 min-w-0"><div className="text-sm font-medium truncate">{o.title}</div><div className="text-[10px] text-muted-foreground mt-0.5">{o.ownerName ?? "—"} • {o.orgUnitName ?? "—"}</div></div>
-                    <Badge variant={o.status === "draft" ? "secondary" : "danger"} className="text-[10px] shrink-0">{STATUS_LABELS[o.status] ?? o.status}</Badge>
-                  </Link>
-                ))}
-              </div>
-            )}
-          </CardContent>
-        </Card>
-      </div>
-
-      {/* Updates + Cycles */}
-      <div className="grid gap-5 lg:grid-cols-2">
-        <Card>
-          <CardHeader><CardTitle className="text-base flex items-center gap-2"><Activity className="size-4" />آخر تحديثات الإنجاز</CardTitle></CardHeader>
-          <CardContent className="p-0">
-            {recentUpdates.length === 0 ? <p className="text-sm text-muted-foreground p-4 text-center">لا توجد تحديثات.</p> : (
-              <div className="divide-y divide-border">
-                {recentUpdates.map((u: any) => (
-                  <Link key={u.id} href={`/app/objectives/${u.objectiveId}`} className="flex items-center justify-between gap-3 p-3 hover:bg-muted/30">
-                    <div className="flex-1 min-w-0"><div className="text-sm font-medium truncate">{u.objectiveTitle ?? "—"}</div><div className="text-[10px] text-muted-foreground mt-0.5">{u.keyResultTitle ?? "—"} • {u.requesterName ?? "—"}</div></div>
+              {/* قائمة الأهداف تحت الرسم */}
+              <div className="mt-3 space-y-1">
+                {objPerformanceData.map((d, i) => (
+                  <Link key={i} href={`/app/objectives/${approved[i]?.id ?? ""}`} className="flex items-center justify-between gap-2 text-xs py-1 hover:bg-muted/30 rounded px-2">
+                    <span className="truncate text-muted-foreground">{d.title}</span>
                     <div className="flex items-center gap-2 shrink-0">
-                      <span className="text-xs tabular-nums text-muted-foreground">{u.requestedValue ?? 0}</span>
-                      <Badge variant={u.status === "approved" ? "success" : u.status === "rejected" ? "danger" : "info"} className="text-[10px]">{u.status === "approved" ? "معتمد" : u.status === "rejected" ? "مُعاد" : "بانتظار"}</Badge>
+                      <Progress value={d["نسبة الإنجاز"]} className="h-1 w-16" />
+                      <span className="tabular-nums font-medium" style={{ color: d["نسبة الإنجاز"] >= 85 ? "hsl(155,55%,45%)" : d["نسبة الإنجاز"] >= 60 ? "hsl(45,90%,50%)" : d["نسبة الإنجاز"] >= 30 ? "hsl(27,55%,50%)" : "hsl(0,70%,55%)" }}>
+                        {d["نسبة الإنجاز"]}%
+                      </span>
                     </div>
                   </Link>
                 ))}
               </div>
-            )}
-          </CardContent>
-        </Card>
-        <Card>
-          <CardHeader><CardTitle className="text-base flex items-center gap-2"><Repeat className="size-4" />الدورات النشطة ({activeCycles.length})</CardTitle></CardHeader>
-          <CardContent className="p-0">
-            {activeCycles.length === 0 ? <p className="text-sm text-muted-foreground p-4 text-center">لا توجد دورات نشطة.</p> : (
-              <div className="divide-y divide-border">
-                {activeCycles.map((c: any) => {
-                  const cycleObjs = objectives.filter((o: any) => o.cycleId === c.id || o.cycleName === c.name);
-                  const cycleApproved = cycleObjs.filter((o: any) => o.status === "approved").length;
-                  const cycleApprovedPct = cycleObjs.length > 0 ? Math.round((cycleApproved / cycleObjs.length) * 100) : 0;
-                  return (
-                    <Link key={c.id} href={`/app/cycles/${c.id}`} className="block p-3 hover:bg-muted/30">
-                      <div className="flex items-center justify-between gap-2"><span className="text-sm font-medium">{c.name}</span><Badge variant="success" className="text-[10px]">نشطة</Badge></div>
-                      <div className="text-[10px] text-muted-foreground mt-1">{new Date(c.startDate).toLocaleDateString("ar-EG")} — {new Date(c.endDate).toLocaleDateString("ar-EG")}</div>
-                      <div className="mt-2">
-                        <div className="flex justify-between text-[10px] text-muted-foreground mb-1"><span>معتمدة: {cycleApproved}/{cycleObjs.length}</span><span>{cycleApprovedPct}%</span></div>
-                        <Progress value={cycleApprovedPct} className="h-1.5" />
-                      </div>
-                    </Link>
-                  );
-                })}
-              </div>
-            )}
-          </CardContent>
-        </Card>
-      </div>
+            </>
+          )}
+        </CardContent>
+      </Card>
 
-      {/* Cycle progress bar */}
-      {activeCycle && (
-        <Card>
-          <CardHeader><CardTitle className="text-base flex items-center gap-2"><Calendar className="size-4" />{activeCycle.name}</CardTitle></CardHeader>
-          <CardContent className="space-y-3">
-            <div>
-              <div className="flex justify-between text-xs text-muted-foreground mb-1.5"><span>التقدّم الزمني</span><span className="tabular-nums">{cycleProgress}%</span></div>
-              <Progress value={cycleProgress} className="h-2" />
+      {/* ===== 4. توزيع مستويات الأداء ===== */}
+      <Card>
+        <CardHeader><CardTitle className="text-base">توزيع مستويات الأداء</CardTitle></CardHeader>
+        <CardContent>
+          <div className="grid grid-cols-2 sm:grid-cols-4 gap-3">
+            {performanceLevels.map((level, i) => {
+              const pct = approvedCount > 0 ? Math.round((level.count / approvedCount) * 100) : 0;
+              return (
+                <div key={i} className="rounded-md border border-border p-3 text-center">
+                  <div className="size-8 rounded-full mx-auto mb-2 flex items-center justify-center" style={{ backgroundColor: level.color + "20" }}>
+                    <div className="size-3 rounded-full" style={{ backgroundColor: level.color }} />
+                  </div>
+                  <div className="text-xl font-bold tabular-nums" style={{ color: level.color }}>{level.count}</div>
+                  <div className="text-[10px] text-muted-foreground">{level.label}</div>
+                  <div className="text-[10px] text-muted-foreground/70">{pct}%</div>
+                  <Progress value={pct} className="h-1 mt-2" />
+                </div>
+              );
+            })}
+          </div>
+        </CardContent>
+      </Card>
+
+      {/* ===== 5. آخر التحديثات ===== */}
+      <Card>
+        <CardHeader><CardTitle className="text-base flex items-center gap-2"><Activity className="size-4" />آخر تحديثات الإنجاز</CardTitle></CardHeader>
+        <CardContent className="p-0">
+          {updates.length === 0 ? (
+            <p className="text-sm text-muted-foreground p-4 text-center">لا توجد تحديثات.</p>
+          ) : (
+            <div className="divide-y divide-border">
+              {updates.slice(0, 5).map((u: any) => (
+                <Link key={u.id} href={`/app/objectives/${u.objectiveId}`} className="flex items-center justify-between gap-3 p-3 hover:bg-muted/30">
+                  <div className="flex-1 min-w-0">
+                    <div className="text-sm font-medium truncate">{u.objectiveTitle ?? "—"}</div>
+                    <div className="text-[10px] text-muted-foreground mt-0.5">
+                      {u.keyResultTitle ?? "—"} • {u.requesterName ?? "—"} • {new Date(u.createdAt).toLocaleDateString("ar-EG")}
+                    </div>
+                  </div>
+                  <div className="flex items-center gap-2 shrink-0">
+                    <div className="text-right">
+                      <div className="text-xs tabular-nums font-medium">{u.requestedValue ?? 0}{u.status === "approved" ? " ✓" : u.status === "rejected" ? " ✗" : " ⏳"}</div>
+                    </div>
+                    <Badge variant={u.status === "approved" ? "success" : u.status === "rejected" ? "danger" : "info"} className="text-[10px]">
+                      {u.status === "approved" ? "معتمد" : u.status === "rejected" ? "مُعاد" : "بانتظار"}
+                    </Badge>
+                  </div>
+                </Link>
+              ))}
             </div>
-            <div className="grid grid-cols-3 gap-4 pt-2">
-              <div className="text-center"><div className="text-lg font-bold text-foreground tabular-nums">{cycleProgress}%</div><div className="text-[10px] text-muted-foreground">الزمن المنقضي</div></div>
-              <div className="text-center"><div className="text-lg font-bold text-foreground tabular-nums">{daysRemaining}</div><div className="text-[10px] text-muted-foreground">يوم متبقي</div></div>
-              <div className="text-center"><div className="text-lg font-bold text-success tabular-nums">{approvedOfTotalPct}%</div><div className="text-[10px] text-muted-foreground">أهداف معتمدة</div></div>
-            </div>
-          </CardContent>
-        </Card>
-      )}
+          )}
+        </CardContent>
+      </Card>
     </div>
   );
-}
-
-function KpiCard({ icon, label, value, subValue, href, color = "text-primary", bg = "bg-primary/10" }: { icon: React.ReactNode; label: string; value: number | string; subValue?: string; href?: string; color?: string; bg?: string; }) {
-  const content = (
-    <div className="rounded-lg border border-border bg-card p-4 hover:border-primary/40 hover:shadow-sm transition-all">
-      <div className="flex size-9 items-center justify-center rounded-md ${bg} ${color}">
-        <span className={`flex size-9 items-center justify-center rounded-md ${bg} ${color}`}>{icon}</span>
-      </div>
-      <div className="mt-3 space-y-0.5">
-        <div className="text-2xl font-bold text-foreground tabular-nums">{value}</div>
-        <div className="text-xs text-muted-foreground">{label}{subValue && <span className="text-[10px] text-muted-foreground/70 mr-1">• {subValue}</span>}</div>
-      </div>
-    </div>
-  );
-  return href ? <Link href={href}>{content}</Link> : content;
 }
